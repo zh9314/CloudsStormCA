@@ -1,9 +1,9 @@
 
 
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Map;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
@@ -18,6 +18,8 @@ import org.dom4j.DocumentException;
 import org.dom4j.DocumentHelper;
 import org.dom4j.Element;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import commonTool.CommonTool;
 import commonTool.Log4JUtils;
@@ -27,18 +29,20 @@ import lambdaExprs.infrasCode.main.Operation;
 import lambdaExprs.infrasCode.main.SEQCode;
 import lambdaInfrs.credential.UserCredential;
 import lambdaInfrs.database.UserDatabase;
+import lambdaInfrs.engine.TEngine.TEngine;
+import lambdaInfrs.request.DeleteRequest;
 import topology.analysis.TopologyAnalysisMain;
+import lambdaExprs.infrasCode.log.Logs;
 import lambdaExprs.infrasCode.main.Code;
 
 
 @Path("/ctrl")
 public class CtrlAgent {
 	
-	private String signalFilePath = File.separator + "tmp" + File.separator + "running";
 	
 	private static final String appGzFileRoot = File.separator + "tmp" + File.separator ;
 	
-	private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + File.separator + "work" + File.separator;
+	private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
 
 	private static final String topologyInf = "Infs" +File.separator+ "Topology" +File.separator+ "_top.yml";
 	private static final String credInf = "Infs" +File.separator+ "UC" +File.separator+ "cred.yml";
@@ -65,13 +69,25 @@ public class CtrlAgent {
 			return Response.status(400)
 					.entity("'appid' is not valid")
 					.build();
+		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
 		String appGzFilePath = appGzFileRoot + appID + ".tar.gz";
 		File appGzFile = new File(appGzFilePath);
-		if(!appGzFile.exists())
+		if(!appGzFile.exists()){
+			ExeOperation.releaseSignal(appID);
 			return Response.status(551)
 					.entity("No corresponding GZ file of AppID: " + appID)
 					.build();
-		
+		}
 		
 		String rootDir = appsRoot + "AppInfs" + File.separator;
 		File rootDirF = new File(rootDir);
@@ -83,6 +99,7 @@ public class CtrlAgent {
 			TARGZ.decompress(appGzFilePath, new File(appRootDir));
 		} catch (IOException e) {
 			e.printStackTrace();
+			ExeOperation.releaseSignal(appID);
 			return Response.status(520)
 					.entity(e.getMessage())
 					.build();
@@ -95,10 +112,12 @@ public class CtrlAgent {
 		String logsDir = appRootDir + logsInf;
 		
 		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
-		if(!tam.fullLoadWholeTopology())
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
 			return Response.status(520)
 					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
 					.build();
+		}
 		
 		UserCredential userCredential = new UserCredential();
 		userCredential.loadCloudAccessCreds(credentialsPath);
@@ -111,26 +130,17 @@ public class CtrlAgent {
 		Log4JUtils.setInfoLogFile(logsDir + "CloudsStorm.log");
 		
 		ICYAML ic = new ICYAML(tam.wholeTopology, userCredential, userDatabase);
-		if(!ic.loadInfrasCodes(ICPath, appRootDir))
+		if(!ic.loadInfrasCodes(ICPath, appRootDir)){
+			ExeOperation.releaseSignal(appID);
 			return Response.status(520)
 					.entity("Some problems with the Infras Code!\n"+ICPath)
 					.build();
+		}
 		
 		String icLogPath = logsDir + "InfrasCode.log";
 		
-		ExeThread exeThread = new ExeThread(ic, icLogPath);
+		ExeThread exeThread = new ExeThread(ic, icLogPath, appID);
 		exeThread.start();
-		
-		/*String icLogStr = "";
-		File icLogFile = new File(icLogPath);
-		try {
-			icLogStr = FileUtils.readFileToString(icLogFile, "UTF-8");
-		} catch (IOException e) {
-			e.printStackTrace();
-			return Response.status(520)
-					.entity("Exception! " + e.getMessage())
-					.build();
-		}*/
 		
 		return Response.status(200)
 				.entity("Infrastructure code is executing!\nExeID: 0")
@@ -143,10 +153,289 @@ public class CtrlAgent {
 	 */
 	@Path("/check")
 	@GET
-	public Response check(@QueryParam("appid") String appID, @QueryParam("exeid") String exeID) {
+	public Response check(@QueryParam("appid") String appID, @QueryParam("exeid") String exeID) {	
+		if(appID == null || appID.trim().equals(""))
+			return Response.status(400)
+						.entity("'appid' is not valid")
+						.build();
+		if(exeID == null || exeID.trim().equals(""))
+			return Response.status(400)
+						.entity("'exeid' is not valid")
+						.build();
+		
+		String icLogPath = null;
+		if(exeID.trim().equals("0"))
+			icLogPath = appsRoot + "AppInfs" + File.separator + appID 
+								 + File.separator + logsInf + "InfrasCode.log";
+		else
+			icLogPath = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"))
+								+ File.separator + "IC_"+appID+"_"+exeID+".log";
+		
+		File icLogFile = new File(icLogPath);
+		if(!icLogFile.exists())
+			return Response.status(420)
+					.entity("Cannot find the corresponding log file of AppID="+appID+" ExeID="+exeID+"!")
+					.build();
+		
+		try {
+			String icLogStr = FileUtils.readFileToString(icLogFile, "UTF-8");
+			if(icLogStr.length() < 10)
+				return Response.status(553)
+						.entity("Execution has not completed yet!")
+						.build();
+
+			ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+			Logs logContent = mapper.readValue(new File(icLogPath), Logs.class);
+			for(int li = logContent.LOGs.size() - 1 ; li >= 0  ; li--){
+				Map<String, String> logTerm = logContent.LOGs.get(li).LOG;
+				for(Map.Entry<String, String> entry : logTerm.entrySet()){
+					String logKey = entry.getKey();
+					if(logKey.toLowerCase().contains("error"))
+						return Response.status(520)
+								.entity("It seems there are problems during execution!")
+								.build();
+				}
+			}
+			
+			return Response.status(200)
+					.entity("Execution is successful!")
+					.build();
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+			return Response.status(520)
+					.entity(e.getMessage())
+					.build();
+		}
+        
+	}
+	
+	/**
+	 * Check the logs of the infrastructure code
+	 * @return
+	 */
+	@Path("/check/iclog")
+	@GET
+	public Response checkICLog(@QueryParam("appid") String appID, @QueryParam("exeid") String exeID) {	
+		if(appID == null || appID.trim().equals(""))
+			return Response.status(400)
+						.entity("'appid' is not valid")
+						.build();
+		if(exeID == null || exeID.trim().equals(""))
+			return Response.status(400)
+						.entity("'exeid' is not valid")
+						.build();
+		
+		String icLogPath = null;
+		if(exeID.trim().equals("0"))
+			icLogPath = appsRoot + "AppInfs" + File.separator + appID 
+								 + File.separator + logsInf + "InfrasCode.log";
+		else
+			icLogPath = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"))
+								+ File.separator + "IC_"+appID+"_"+exeID+".log";
+		
+		File icLogFile = new File(icLogPath);
+		if(!icLogFile.exists())
+			return Response.status(420)
+					.entity("Cannot find the corresponding log file of AppID="+appID+" ExeID="+exeID+"!")
+					.build();
+		
+		try {
+			String icLogStr = FileUtils.readFileToString(icLogFile, "UTF-8");
+			if(icLogStr.length() < 10)
+				return Response.status(553)
+						.entity("Execution has not completed yet!")
+						.build();
+    		
+			return Response.status(200)
+					.entity(icLogStr)
+					.build();
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+			return Response.status(520)
+					.entity(e.getMessage())
+					.build();
+		}
+        
+	}
+	
+	/**
+	 * Check the logs of the CloudsStorm
+	 * @return
+	 */
+	@Path("/check/cslog")
+	@GET
+	public Response checkCSLog(@QueryParam("appid") String appID, @QueryParam("exeid") String exeID) {	
+		if(appID == null || appID.trim().equals(""))
+			return Response.status(400)
+						.entity("'appid' is not valid")
+						.build();
+		if(exeID == null || exeID.trim().equals(""))
+			return Response.status(400)
+						.entity("'exeid' is not valid")
+						.build();
+		
+		String icLogPath = null;
+		if(exeID.trim().equals("0"))
+			icLogPath = appsRoot + "AppInfs" + File.separator + appID 
+								 + File.separator + logsInf + "CloudsStorm.log";
+		else
+			icLogPath = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"))
+								+ File.separator + "CloudsStorm_"+appID+"_"+exeID+".log";
+		
+		File icLogFile = new File(icLogPath);
+		if(!icLogFile.exists())
+			return Response.status(420)
+					.entity("Cannot find the corresponding log file of AppID="+appID+" ExeID="+exeID+"!")
+					.build();
+		
+		try {
+			String icLogStr = FileUtils.readFileToString(icLogFile, "UTF-8");
+			if(icLogStr.length() < 10)
+				return Response.status(553)
+						.entity("Execution has not completed yet!")
+						.build();
+    		
+			return Response.status(200)
+					.entity(icLogStr)
+					.build();
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+			return Response.status(520)
+					.entity(e.getMessage())
+					.build();
+		}
+        
+	}
+	
+	@Path("/delete/ctrl")
+	@GET
+	public Response deleteCtrl(@QueryParam("appid") String appID) {
+		if(appID == null || appID.trim().equals(""))
+			return Response.status(400)
+						.entity("'appid' is not valid")
+						.build();
+		
+		String appRootDir = appsRoot + "AppInfs" + File.separator + appID 
+				 									+ File.separator;
+		File appRootDirF = new File(appRootDir);
+		if(!appRootDirF.exists())
+			return Response.status(551)
+					.entity("There is no application with AppID: " + appID)
+					.build();
+		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
+		String topTopologyLoadingPath = appRootDir + topologyInf;
+		String credentialsPath = appRootDir + credInf;
+		String dbsPath = appRootDir + dbInf;
+		String logsDir = appRootDir + logsInf;
+		
+		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
+			return Response.status(520)
+					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
+					.build();
+		}
+		
+		UserCredential userCredential = new UserCredential();
+		userCredential.loadCloudAccessCreds(credentialsPath);
+		UserDatabase userDatabase = new UserDatabase();
+		userDatabase.loadCloudDBs(dbsPath);
+		
+		File logsDirF = new File(logsDir);
+		if(!logsDirF.exists())
+			logsDirF.mkdir();
+		Log4JUtils.setInfoLogFile(logsDir + "CloudsStorm.log");
+		
+		TEngine tEngine = new TEngine();
+		tEngine.deleteAll(tam.wholeTopology, userCredential, userDatabase);
+		
+		Log4JUtils.removeAllLogAppender();
+		
+		ExeOperation.releaseSignal(appID);
 		return Response.status(200)
-				.entity("Control agent is online!\n")
+				.entity("All resources (including CA) are deleted!")
 				.build();
+		
+	}
+	
+	@Path("/delete/all")
+	@GET
+	public Response deleteAll(@QueryParam("appid") String appID) {
+		if(appID == null || appID.trim().equals(""))
+			return Response.status(400)
+						.entity("'appid' is not valid")
+						.build();
+		
+		String appRootDir = appsRoot + "AppInfs" + File.separator + appID 
+				 									+ File.separator;
+		File appRootDirF = new File(appRootDir);
+		if(!appRootDirF.exists())
+			return Response.status(551)
+					.entity("There is no application with AppID: " + appID)
+					.build();
+		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
+		String topTopologyLoadingPath = appRootDir + topologyInf;
+		String credentialsPath = appRootDir + credInf;
+		String dbsPath = appRootDir + dbInf;
+		String logsDir = appRootDir + logsInf;
+		
+		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
+			return Response.status(520)
+					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
+					.build();
+		}
+		
+		UserCredential userCredential = new UserCredential();
+		userCredential.loadCloudAccessCreds(credentialsPath);
+		UserDatabase userDatabase = new UserDatabase();
+		userDatabase.loadCloudDBs(dbsPath);
+		
+		File logsDirF = new File(logsDir);
+		if(!logsDirF.exists())
+			logsDirF.mkdir();
+		Log4JUtils.setInfoLogFile(logsDir + "CloudsStorm.log");
+		
+		TEngine tEngine = new TEngine();
+		DeleteRequest deleteReq = new DeleteRequest();
+		for(int si = 0 ; si<tam.wholeTopology.topologies.size() ; si++){
+			if(tam.wholeTopology.topologies.get(si).topology.equalsIgnoreCase("_ctrl"))
+				continue;
+			deleteReq.content.put(tam.wholeTopology.topologies.get(si).topology, false);
+		}
+		tEngine.delete(tam.wholeTopology, userCredential, userDatabase, deleteReq);
+		
+		Log4JUtils.removeAllLogAppender();
+		
+		ExeOperation.releaseSignal(appID);
+		return Response.status(200)
+				.entity("All resources (excluding CA) are deleted!")
+				.build();
+		
 	}
 	
 	/*
@@ -164,10 +453,34 @@ public class CtrlAgent {
 	@POST
 	@Consumes("text/xml")
 	public Response provision(String xmlmsg) {
-		
+		return exeICCMD(xmlmsg, "provision");
+
+	}
+	
+	
+	/*
+	 *  Requests of controlling underlying infrastructure
+	 *  Example
+	 *  <request>
+	 *  		<AppID>123456<AppID>
+	 *      <ObjectType>SubTopology</ObjectType>
+	 *      <Objects>sb1||sb2</Objects>
+	 *  </request>
+	 *  
+	 *  note: level 0 identifies that the file is the main topology file.
+	 */
+	@Path("/delete")
+	@POST
+	@Consumes("text/xml")
+	public Response delete(String xmlmsg) {
+		return exeICCMD(xmlmsg, "delete");
+
+	}
+	
+	private Response exeICCMD(String xmlmsg, String operation){
 		long currentMili = System.currentTimeMillis();
 		Document doc = null;
-		String icLogStr = null, tmpICLogPath;
+		String tmpICLogPath;
 		try {
 			doc = DocumentHelper.parseText(xmlmsg);
 		} catch (DocumentException e) {
@@ -201,16 +514,27 @@ public class CtrlAgent {
 		String objects = obsElt.getTextTrim();
 		String appID = idElt.getTextTrim();
 		
-		String appRootDir = appsRoot + appID + File.separator;
+		String appRootDir = appsRoot + "AppInfs" + File.separator + appID 
+				 								+ File.separator;
 		File appRootDirF = new File(appRootDir);
 		if(!appRootDirF.exists())
 			return Response.status(551)
 					.entity("There is no application with AppID: " + appID)
 					.build();
 		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
         	String sysTmpDir = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"));
-        	tmpICLogPath = sysTmpDir + File.separator + "IC_"+currentMili+".log";
-        	String tmpCSLog = sysTmpDir + File.separator + "CloudsStorm_"+currentMili+".log";
+        	tmpICLogPath = sysTmpDir + "IC_"+appID+"_"+currentMili+".log";
+        	String tmpCSLog = sysTmpDir + "CloudsStorm_"+appID+"_"+currentMili+".log";
         	
 		String topTopologyLoadingPath = appRootDir + topologyInf;
 		String credentialsPath = appRootDir + credInf;
@@ -219,10 +543,12 @@ public class CtrlAgent {
 		Log4JUtils.setInfoLogFile(tmpCSLog);
 		
 		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
-		if(!tam.fullLoadWholeTopology())
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
 			return Response.status(520)
 					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
 					.build();
+		}
 		
 		UserCredential userCredential = new UserCredential();
 		userCredential.loadCloudAccessCreds(credentialsPath);
@@ -235,62 +561,21 @@ public class CtrlAgent {
 		Operation curOP = new Operation();
 		curOP.ObjectType = objectType;
 		curOP.Objects = objects;
-		curOP.Operation = "provision";
+		curOP.Operation = operation;
 		SEQCode seqCode = new SEQCode();
 		seqCode.OpCode = curOP;
 		icYAML.InfrasCodes.add(seqCode);
 		
-        	icYAML.run(tmpICLogPath);
-        	
-        	File icLogFile = new File(tmpICLogPath);
-    		try {
-    			icLogStr = FileUtils.readFileToString(icLogFile, "UTF-8");
-    		} catch (IOException e) {
-    			e.printStackTrace();
-    			return Response.status(520)
-    					.entity("Exception! " + e.getMessage())
-    					.build();
-    		}
+		ExeThread exeThread = new ExeThread(icYAML, tmpICLogPath, appID);
+		exeThread.start();
+		
     		return Response.status(200)
-					.entity("ExeID: "+currentMili+"\n" + icLogStr)
+					.entity(String.valueOf(currentMili))
 					.build();
-
-		
 	}
 	
 	
-	/**
-	 * Check whether there is a signal file to know whether there is a request running.
-	 * @return
-	 */
-	private boolean checkSignal(){
-		
-		File signalFile = new File(signalFilePath);
-		if(signalFile.exists())
-			return true;
-		else
-			return false;
-	}
 	
-	/**
-	 * Set up a signal file to show there is a request running.
-	 * @return
-	 */
-	private boolean setSignal(){
-
-		try {
-			FileWriter signalFile = new FileWriter(signalFilePath, false);
-			signalFile.close();
-		} catch (IOException e) {
-			e.printStackTrace();
-			return false;
-		}
-		return true;
-	}
 	
-	private void rmSignal(){
-		File signalFile = new File(signalFilePath);
-		FileUtils.deleteQuietly(signalFile);
-	}
 
 }
