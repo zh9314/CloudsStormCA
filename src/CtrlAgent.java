@@ -70,7 +70,7 @@ public class CtrlAgent {
 					.entity("'appid' is not valid")
 					.build();
 		
-		if(ExeOperation.checkSignal(appID))
+		/*if(ExeOperation.checkSignal(appID))
 			return Response.status(552)
 					.entity("Application of '"+appID+"' is running! Reject request!")
 					.build();
@@ -78,7 +78,7 @@ public class CtrlAgent {
 		if(!ExeOperation.setSignal(appID))
 			return Response.status(520)
 					.entity("Signal of '"+appID+"' cannot be set!")
-					.build();
+					.build();*/
 		
 		String appGzFilePath = appGzFileRoot + appID + ".tar.gz";
 		File appGzFile = new File(appGzFilePath);
@@ -136,6 +136,8 @@ public class CtrlAgent {
 					.entity("Some problems with the Infras Code!\n"+ICPath)
 					.build();
 		}
+		ic.curDir = System.getProperty("java.io.tmpdir");
+		ic.rootDir = System.getProperty("java.io.tmpdir");
 		
 		String icLogPath = logsDir + "InfrasCode.log";
 		
@@ -188,12 +190,14 @@ public class CtrlAgent {
 			Logs logContent = mapper.readValue(new File(icLogPath), Logs.class);
 			for(int li = logContent.LOGs.size() - 1 ; li >= 0  ; li--){
 				Map<String, String> logTerm = logContent.LOGs.get(li).LOG;
-				for(Map.Entry<String, String> entry : logTerm.entrySet()){
-					String logKey = entry.getKey();
-					if(logKey.toLowerCase().contains("error"))
-						return Response.status(520)
-								.entity("It seems there are problems during execution!")
-								.build();
+				if(logTerm != null){
+					for(Map.Entry<String, String> entry : logTerm.entrySet()){
+						String logKey = entry.getKey();
+						if(logKey.toLowerCase().contains("error"))
+							return Response.status(520)
+									.entity("It seems there are problems during execution!")
+									.build();
+					}
 				}
 			}
 			
@@ -204,7 +208,7 @@ public class CtrlAgent {
 		} catch (Exception e) {
 			e.printStackTrace();
 			return Response.status(520)
-					.entity(e.getMessage())
+					.entity("Unknown: "+e.getMessage())
 					.build();
 		}
         
@@ -457,6 +461,149 @@ public class CtrlAgent {
 
 	}
 	
+
+	/*
+	 *  Requests of controlling underlying infrastructure
+	 *  Example
+	 *  <request>
+	 *  		<AppID>123456<AppID>
+	 *      <ObjectType>SubTopology</ObjectType>
+	 *      <Objects>sb1||sb2</Objects>
+	 *      <Log>false</Log>
+	 *      <CMDs><CMD0>echo test</CMD0><CMD1>echo ok</CMD1></CMDs>
+	 *  </request>
+	 *  
+	 *  note: level 0 identifies that the file is the main topology file.
+	 */
+	@Path("/execute/cmd")
+	@POST
+	@Consumes("text/xml")
+	public Response executeCMDs(String xmlmsg){
+		long currentMili = System.currentTimeMillis();
+		Document doc = null;
+		boolean logOn = true;
+		ArrayList<String> cmds = new ArrayList<String>();
+		String tmpICLogPath;
+		try {
+			doc = DocumentHelper.parseText(xmlmsg);
+		} catch (DocumentException e) {
+			e.printStackTrace();
+			return Response.status(400)
+					.entity("Execption with the input String! "+e.getMessage())
+					.build();
+		}
+		Element rootElt = doc.getRootElement();
+		if(!rootElt.getName().equals("request"))
+			return Response.status(400)
+					.entity("The root element should be 'request' in input string!")
+					.build();
+		Element idElt = rootElt.element("AppID");
+		if(idElt == null || idElt.getTextTrim().equals(""))
+			return Response.status(400)
+					.entity("'AppID' is not valid!")
+					.build();
+		Element obtElt = rootElt.element("ObjectType");
+		if(obtElt == null || obtElt.getTextTrim().equals(""))
+			return Response.status(400)
+					.entity("'ObjectType' is not valid!")
+					.build();
+		Element obsElt = rootElt.element("Objects");
+		if(obsElt == null || obsElt.getTextTrim().equals(""))
+			return Response.status(400)
+					.entity("'Objects' is not valid!")
+					.build();
+		Element logElt = rootElt.element("Log");
+		if(logElt != null && logElt.getTextTrim().equalsIgnoreCase("false"))
+			logOn = false;
+		Element cmdsElt = rootElt.element("CMDs");
+		if(cmdsElt == null)
+			return Response.status(400)
+					.entity("'CMDs' is not valid!")
+					.build();
+		int cmdIndex = 0;
+		while(true){
+			Element cmdElt = cmdsElt.element("CMD"+cmdIndex);
+			if(cmdElt == null)
+				break;
+			cmds.add(cmdElt.getTextTrim());
+			cmdIndex++;
+		}
+		if(cmds.size() == 0)
+			return Response.status(400)
+					.entity("No valid command in the request!")
+					.build();
+
+		String objectType = obtElt.getTextTrim();
+		String objects = obsElt.getTextTrim();
+		String appID = idElt.getTextTrim();
+		
+		String appRootDir = appsRoot + "AppInfs" + File.separator + appID 
+				 								+ File.separator;
+		File appRootDirF = new File(appRootDir);
+		if(!appRootDirF.exists())
+			return Response.status(551)
+					.entity("There is no application with AppID: " + appID)
+					.build();
+		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
+        	String sysTmpDir = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"));
+        	tmpICLogPath = sysTmpDir + "IC_"+appID+"_"+currentMili+".log";
+        	String tmpCSLog = sysTmpDir + "CloudsStorm_"+appID+"_"+currentMili+".log";
+        	
+		String topTopologyLoadingPath = appRootDir + topologyInf;
+		String credentialsPath = appRootDir + credInf;
+		String dbsPath = appRootDir + dbInf;
+		
+		Log4JUtils.setInfoLogFile(tmpCSLog);
+		
+		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
+			return Response.status(520)
+					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
+					.build();
+		}
+		
+		UserCredential userCredential = new UserCredential();
+		userCredential.loadCloudAccessCreds(credentialsPath);
+		UserDatabase userDatabase = new UserDatabase();
+		userDatabase.loadCloudDBs(dbsPath);
+		
+		ICYAML icYAML = new ICYAML(tam.wholeTopology, userCredential, userDatabase);
+		icYAML.Mode = "LOCAL";
+		icYAML.InfrasCodes = new ArrayList<Code>();
+		for(int ci = 0 ; ci<cmds.size() ; ci++){
+			Operation curOP = new Operation();
+			curOP.ObjectType = objectType;
+			curOP.Objects = objects;
+			if(!logOn)
+				curOP.Log = "off";
+			curOP.Operation = "execute";
+			curOP.Command = cmds.get(ci);
+			SEQCode seqCode = new SEQCode();
+			seqCode.OpCode = curOP;
+			icYAML.InfrasCodes.add(seqCode);
+		}
+		
+		icYAML.curDir = System.getProperty("java.io.tmpdir");
+		icYAML.rootDir = System.getProperty("java.io.tmpdir");
+		
+		ExeThread exeThread = new ExeThread(icYAML, tmpICLogPath, appID);
+		exeThread.start();
+		
+    		return Response.status(200)
+					.entity(String.valueOf(currentMili))
+					.build();
+	}
 	
 	/*
 	 *  Requests of controlling underlying infrastructure
@@ -565,6 +712,10 @@ public class CtrlAgent {
 		SEQCode seqCode = new SEQCode();
 		seqCode.OpCode = curOP;
 		icYAML.InfrasCodes.add(seqCode);
+		
+
+		icYAML.curDir = System.getProperty("java.io.tmpdir");
+		icYAML.rootDir = System.getProperty("java.io.tmpdir");
 		
 		ExeThread exeThread = new ExeThread(icYAML, tmpICLogPath, appID);
 		exeThread.start();
