@@ -28,19 +28,30 @@
 
     function visual(jsonstr){
 
+      nodes = [];
+
+      edges = [];
+
+      colors = [];
+
       var obj = JSON.parse(jsonstr);
+
+      var cpdc = [];
+
+      var complex = false;
+      var input = document.getElementById('switch');
+      if(input.value === 'Complex Mode Enabled')
+        complex = true;
 
       for(var si in obj.Subnets){
         var idstr = obj.Subnets[si].Name;
         var subnet = obj.Subnets[si].Subnet + '/' + obj.Subnets[si].Netmask;
-        nodes.push({id: idstr, label: subnet, shape: 'triangle', color: 'red', size: 25});
+        nodes.push({id: idstr, label: subnet, shape: 'hexagon', color: 'red', size: 25});
 
       }
 
-      var stColor = 0x2B7CE9; ///blue
       for(var si in obj.SubTopologies){
         var curSTI = obj.SubTopologies[si];
-        colors.push(stColor);
         for(var vi in curSTI.VMs){
           var curVM = curSTI.VMs[vi];
           var lstr = curVM.Name;
@@ -49,11 +60,22 @@
           var vmsizef = parseFloat(curVM.CPU)+parseFloat(curVM.MEM);
           var vmsizei = parseInt(vmsizef)*10;
           var popUpText = 'Name: '+curSTI.Name+'</br>CP: '+curSTI.CloudProvider+'</br>DC: '+curSTI.DataCentre+'</br>CPU: '+curVM.CPU+'vCPU</br>MEM: '+curVM.MEM+'G</br>Status: '+curVM.Status;
-          nodes.push({id: curVM.Name, label: lstr, shape: 'dot', color: '#'+stColor.toString(16), size: vmsizei, title: popUpText});
+          nodes.push({id: curVM.Name, label: lstr, shape: 'dot', color: '#'+curVM.Color, size: vmsizei, title: popUpText});
           
         }
-        stColor += 0x444444;
-        stColor %= 0xFFFFFF;
+
+        if(complex){
+          var found = false;
+          for(var ci = 0 ; ci < cpdc.length ; ci++)
+            if(cpdc[ci].CloudProvider === curSTI.CloudProvider 
+                && cpdc[ci].DataCentre === curSTI.DataCentre){
+              found = true;
+              break;
+            }
+          if(!found)
+            cpdc.push(curSTI);
+        }
+
       }
       
       
@@ -65,17 +87,24 @@
         }
 
       }
-      
 
-      // legend
-      /*var mynetwork = document.getElementById('mynetwork');
-      var x = - mynetwork.clientWidth / 2 + 50;
-      var y = - mynetwork.clientHeight / 2 + 50;
-      var step = 90;
-      for(var si in obj.SubTopologies){
-        var curSTI = obj.SubTopologies[si];
-        nodes.push({id: si, x: x, y: y + si*step, label: curSTI.Name + ': ' + curSTI.CloudProvider + '\n' + curSTI.DataCentre, shape: 'square', size: 15, fixed: true, physics:false, color: '#'+colors[si].toString(16)});
-      }*/
+      if(complex){
+        for(var ci in cpdc){
+          var curCPDC = cpdc[ci];
+          var curID = curCPDC.CloudProvider+curCPDC.DataCentre;
+          nodes.push({id: curID, label: curCPDC.CloudProvider+'\n'+curCPDC.DataCentre, shape: 'box', shapeProperties: {borderDashes: true}, color: {border: 'blue', background: 'white'}, size: 25});
+          for(var si in obj.SubTopologies){
+            var curSTI = obj.SubTopologies[si];
+            if(curCPDC.CloudProvider === curSTI.CloudProvider && curCPDC.DataCentre === curSTI.DataCentre){
+              for(var vi in curSTI.VMs){
+                var curVM = curSTI.VMs[vi];
+                edges.push({from: curID, to: curVM.Name, length: 30, width: 2, color: 'green', dashes: true});
+              }
+            }
+          }
+        }
+      }
+      
 
       // create a network
       var container = document.getElementById('mynetwork');
@@ -85,9 +114,6 @@
       };
       var options = {
         interaction: { hover: true },
-        manipulation: {
-            enabled: true
-        },
         physics:{
           barnesHut:{gravitationalConstant:-30000},
           stabilization: {iterations:2500}
@@ -99,14 +125,8 @@
 
 
     // Called when the Visualization API is loaded.
-    function draw() {
-      // Create a data table with nodes.
-      nodes = [];
-
-      // Create a data table with links.
-      edges = [];
-
-      colors = [];
+    function draw(all) {
+      
 
       var xhttp = new XMLHttpRequest();
       var ip_addr = document.location.hostname;
@@ -127,16 +147,22 @@
       if(!input.value)
         appid = '123';
       else{
-        if(input.value.replace(/(^s*)|(s*$)/g, "").length == 0){
+        if(input.value.replace(/(^s*)|(s*$)/g, "").length == 0)
           appid = '123';
-        }
+        else
+          appid = input.value;
       }
-      URL = "http://"+ip_addr+":8080/CloudsStormCA/rest/lookup/visual/running?appid="+appid;
+      var URL = null;
+      if(all)
+        URL = "http://"+ip_addr+":8080/CloudsStormCA/rest/lookup/visual/all?appid="+appid;
+      else
+        URL = "http://"+ip_addr+":8080/CloudsStormCA/rest/lookup/visual/running?appid="+appid;
       xhttp.open("GET", URL, true);
       xhttp.send();
 
     }
-      
+
+
     
     
   
@@ -145,13 +171,13 @@
 
 </head>
 
-<body onload="draw()" data-gr-c-s-loaded="true">
+<body onload="draw(false)" data-gr-c-s-loaded="true">
 
 <div id="mynetwork"><div class="vis-network" tabindex="900" style="position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"><canvas width="12000" height="12000" style="position: relative; touch-action: none; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"></canvas></div></div>
 
-&nbsp &nbsp AppID: <input type="text" id="appid"></input> </br></br>
+&nbsp &nbsp AppID: <input type="text" id="appid"></input> &nbsp &nbsp <input type="button" id='switch' value="Complex Mode Disabled" onclick="if(this.value=='Complex Mode Disabled') this.value='Complex Mode Enabled'; else this.value='Complex Mode Disabled'"/></br></br>
 
-&nbsp &nbsp <button type="button" onclick="draw()">Refresh</button>
+&nbsp &nbsp <button type="button" onclick="draw(false)">Refresh</button>  &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp  <button type="button" onclick="draw(true)">ShowAll</button>
 
 <p id="result"></p>
 
