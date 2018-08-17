@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Network Topology</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet" type="text/css"/>
+<style type="text/css">
+    html, body {
+      font: 10pt arial;
+      padding: 0;
+      margin: 0;
+      width: 100;
+      height: 100%;
+    }
+
+    #mynetwork {
+      width: 100%;
+      height: 90%;
+    }
+  </style>
+
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+
+<script type="text/javascript">
+
+    var nodes = null;
+    var edges = null;
+    var network = null;
+
+    function visual(jsonstr){
+
+      var obj = JSON.parse(jsonstr);
+
+      for(var si in obj.Subnets){
+        var idstr = obj.Subnets[si].Name;
+        var subnet = obj.Subnets[si].Subnet + '/' + obj.Subnets[si].Netmask;
+        nodes.push({id: idstr, label: subnet, shape: 'triangle', color: 'red', size: 25});
+
+      }
+
+      var stColor = 0x2B7CE9; ///blue
+      for(var si in obj.SubTopologies){
+        var curSTI = obj.SubTopologies[si];
+        colors.push(stColor);
+        for(var vi in curSTI.VMs){
+          var curVM = curSTI.VMs[vi];
+          var lstr = curVM.Name;
+          if(curVM.Status === 'running')
+            lstr += (': ' + curVM.PublicIP);
+          var vmsizef = parseFloat(curVM.CPU)+parseFloat(curVM.MEM);
+          var vmsizei = parseInt(vmsizef)*10;
+          var popUpText = 'Name: '+curSTI.Name+'</br>CP: '+curSTI.CloudProvider+'</br>DC: '+curSTI.DataCentre+'</br>CPU: '+curVM.CPU+'vCPU</br>MEM: '+curVM.MEM+'G</br>Status: '+curVM.Status;
+          nodes.push({id: curVM.Name, label: lstr, shape: 'dot', color: '#'+stColor.toString(16), size: vmsizei, title: popUpText});
+          
+        }
+        stColor += 0x444444;
+        stColor %= 0xFFFFFF;
+      }
+      
+      
+      for(var si in obj.Subnets){
+        var idstr = obj.Subnets[si].Name;
+        for(var mi in obj.Subnets[si].Memebers){
+          var curMember = obj.Subnets[si].Memebers[mi];
+          edges.push({from: idstr, to: curMember.VMName, length: 60, width: 5, label: curMember.PrivateIP, color: 'green'});
+        }
+
+      }
+      
+
+      // legend
+      /*var mynetwork = document.getElementById('mynetwork');
+      var x = - mynetwork.clientWidth / 2 + 50;
+      var y = - mynetwork.clientHeight / 2 + 50;
+      var step = 90;
+      for(var si in obj.SubTopologies){
+        var curSTI = obj.SubTopologies[si];
+        nodes.push({id: si, x: x, y: y + si*step, label: curSTI.Name + ': ' + curSTI.CloudProvider + '\n' + curSTI.DataCentre, shape: 'square', size: 15, fixed: true, physics:false, color: '#'+colors[si].toString(16)});
+      }*/
+
+      // create a network
+      var container = document.getElementById('mynetwork');
+      var data = {
+        nodes: nodes,
+        edges: edges
+      };
+      var options = {
+        interaction: { hover: true },
+        manipulation: {
+            enabled: true
+        },
+        physics:{
+          barnesHut:{gravitationalConstant:-30000},
+          stabilization: {iterations:2500}
+        }
+      };
+      network = new vis.Network(container, data, options);
+
+    }
+
+
+    // Called when the Visualization API is loaded.
+    function draw() {
+      // Create a data table with nodes.
+      nodes = [];
+
+      // Create a data table with links.
+      edges = [];
+
+      colors = [];
+
+      var xhttp = new XMLHttpRequest();
+      var ip_addr = document.location.hostname;
+      xhttp.onreadystatechange = function() {
+        if (this.readyState == 4) {
+          if (this.status == 200){
+            visual(this.responseText);
+            document.getElementById("result").innerHTML = "Success! ";
+          }else{
+            document.getElementById("result").innerHTML = "Failed: 'AppID' is not valid! "+this.responseText;
+          }
+           
+        }
+                
+      };
+      var appid = null;
+      var input = document.getElementById('appid');
+      if(!input.value)
+        appid = '123';
+      else{
+        if(input.value.replace(/(^s*)|(s*$)/g, "").length == 0){
+          appid = '123';
+        }
+      }
+      URL = "http://"+ip_addr+":8080/CloudsStormCA/rest/lookup/visual/running?appid="+appid;
+      xhttp.open("GET", URL, true);
+      xhttp.send();
+
+    }
+      
+    
+    
+  
+</script>
+
+
+</head>
+
+<body onload="draw()" data-gr-c-s-loaded="true">
+
+<div id="mynetwork"><div class="vis-network" tabindex="900" style="position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"><canvas width="12000" height="12000" style="position: relative; touch-action: none; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"></canvas></div></div>
+
+&nbsp &nbsp AppID: <input type="text" id="appid"></input> </br></br>
+
+&nbsp &nbsp <button type="button" onclick="draw()">Refresh</button>
+
+<p id="result"></p>
+
+
+</body>
+</html>
