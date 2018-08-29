@@ -3,6 +3,7 @@
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 
 import javax.ws.rs.Consumes;
@@ -723,6 +724,205 @@ public class CtrlAgent {
     		return Response.status(200)
 					.entity(String.valueOf(currentMili))
 					.build();
+	}
+	
+	
+	/*
+	 *  Requests of controlling underlying infrastructure
+	 *  Example
+	 *  <request>
+	 *  		<AppID>123456</AppID>
+	 *      <ScaleReq>
+	 *      <ScaleReq0>
+	 *      		<ObjectType>SubTopology</ObjectType>
+	 *          <Objects>sb1||sb2</Objects>
+	 *      		<CP>ExoGENI</CP>
+	 * 	        <DC>GWU (Washington DC,  USA) XO Rack</DC>
+	 *          <ScaledSTName>scaling1</ScaledSTName>
+	 *	        <OutIn>In</OutIn>
+	 *		</ScaleReq0>
+	 *      <ScaleReq1>
+	 *      		<ObjectType>VM</ObjectType>
+	 *          <Objects>sb1.vm2||sb2.vm3</Objects>
+	 *      		<CP>ExoGENI</CP>
+	 * 	        <DC>GWU (Washington DC,  USA) XO Rack</DC>
+	 *          <ScaledSTName>scaling2</ScaledSTName>
+	 *	        <OutIn>Out</OutIn>
+	 *		</ScaleReq1>
+	 *      </ScaleReq>
+	 *  </request>
+	 *  
+	 */
+	@Path("/hscale")
+	@POST
+	@Consumes("text/xml")
+	public Response hscale(String xmlmsg) {
+		long currentMili = System.currentTimeMillis();
+		Document doc = null;
+		String tmpICLogPath;
+		try {
+			doc = DocumentHelper.parseText(xmlmsg);
+		} catch (DocumentException e) {
+			e.printStackTrace();
+			return Response.status(400)
+					.entity("Execption with the input String! "+e.getMessage())
+					.build();
+		}
+		Element rootElt = doc.getRootElement();
+		if(!rootElt.getName().equals("request"))
+			return Response.status(400)
+					.entity("The root element should be 'request' in input string!")
+					.build();
+		Element idElt = rootElt.element("AppID");
+		if(idElt == null || idElt.getTextTrim().equals(""))
+			return Response.status(400)
+					.entity("'AppID' is not valid!")
+					.build();
+		Element reqsElt = rootElt.element("ScaleReq");
+		if(reqsElt == null)
+			return Response.status(400)
+					.entity("'ScaleReq' is not valid!")
+					.build();
+		ArrayList<HScalingRequest> scalingReqs = new ArrayList<HScalingRequest>();
+		int reqIndex = 0;
+		while(true){
+			Element reqElt = reqsElt.element("ScaleReq"+reqIndex);
+			if(reqElt == null)
+				break;
+			HScalingRequest req = new HScalingRequest();
+			req.reqID = "req"+reqIndex;
+			Element obtElt = reqElt.element("ObjectType");
+			if(obtElt == null || obtElt.getTextTrim().equals(""))
+				return Response.status(400)
+						.entity("'ObjectType' is not valid!")
+						.build();
+			Element obsElt = reqElt.element("Objects");
+			if(obsElt == null || obsElt.getTextTrim().equals(""))
+				return Response.status(400)
+						.entity("'Objects' is not valid!")
+						.build();
+			Element cpElt = reqElt.element("CP");
+			if(cpElt == null || cpElt.getTextTrim().equals(""))
+				req.cloudProvider = null;
+			else
+				req.cloudProvider = cpElt.getTextTrim();
+			
+			Element dcElt = reqElt.element("DC");
+			if(dcElt == null || dcElt.getTextTrim().equals(""))
+				req.dataCentre = null;
+			else
+				req.dataCentre = dcElt.getTextTrim();
+			
+			Element nameElt = reqElt.element("ScaledSTName");
+			if(nameElt == null || nameElt.getTextTrim().equals(""))
+				req.scaledSTName = null;
+			else
+				req.scaledSTName = nameElt.getTextTrim();
+			
+			Element outInElt = reqElt.element("OutIn");
+			if(outInElt == null || outInElt.getTextTrim().equals(""))
+				req.scalingDirection = null;
+			else
+				req.scalingDirection = outInElt.getTextTrim();
+			
+			req.targetObjectType = obtElt.getTextTrim();
+			req.targetObjects = obsElt.getTextTrim();
+			scalingReqs.add(req);
+			reqIndex++;
+		}
+		if(scalingReqs.size() == 0)
+			return Response.status(400)
+					.entity("No valid scaling request in the request!")
+					.build();
+		
+		String appID = idElt.getTextTrim();
+		
+		String appRootDir = appsRoot + "AppInfs" + File.separator + appID 
+				 								+ File.separator;
+		File appRootDirF = new File(appRootDir);
+		if(!appRootDirF.exists())
+			return Response.status(551)
+					.entity("There is no application with AppID: " + appID)
+					.build();
+		
+		if(ExeOperation.checkSignal(appID))
+			return Response.status(552)
+					.entity("Application of '"+appID+"' is running! Reject request!")
+					.build();
+		
+		if(!ExeOperation.setSignal(appID))
+			return Response.status(520)
+					.entity("Signal of '"+appID+"' cannot be set!")
+					.build();
+		
+        	String sysTmpDir = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"));
+        	tmpICLogPath = sysTmpDir + "IC_"+appID+"_"+currentMili+".log";
+        	String tmpCSLog = sysTmpDir + "CloudsStorm_"+appID+"_"+currentMili+".log";
+        	
+		String topTopologyLoadingPath = appRootDir + topologyInf;
+		String credentialsPath = appRootDir + credInf;
+		String dbsPath = appRootDir + dbInf;
+		
+		Log4JUtils.setInfoLogFile(tmpCSLog);
+		
+		TopologyAnalysisMain tam = new TopologyAnalysisMain(topTopologyLoadingPath);
+		if(!tam.fullLoadWholeTopology()){
+			ExeOperation.releaseSignal(appID);
+			return Response.status(520)
+					.entity("Some problems with topology description files!\n"+topTopologyLoadingPath)
+					.build();
+		}
+		
+		UserCredential userCredential = new UserCredential();
+		userCredential.loadCloudAccessCreds(credentialsPath);
+		UserDatabase userDatabase = new UserDatabase();
+		userDatabase.loadCloudDBs(dbsPath);
+		
+		ICYAML icYAML = new ICYAML(tam.wholeTopology, userCredential, userDatabase);
+		icYAML.Mode = "LOCAL";
+		icYAML.InfrasCodes = new ArrayList<Code>();
+		
+		String reqStr = "";
+		for(int ri = 0 ; ri<scalingReqs.size() ; ri++){
+			HScalingRequest curReq = scalingReqs.get(ri);
+			Operation curOP = new Operation();
+			curOP.Operation = "hscale";
+			curOP.ObjectType = curReq.targetObjectType;
+			curOP.Objects = curReq.targetObjects;
+			curOP.Options = new HashMap<String, String>();
+			curOP.Options.put("ReqID", "req"+ri);
+			curOP.Options.put("CP", curReq.cloudProvider);
+			curOP.Options.put("DC", curReq.dataCentre);
+			curOP.Options.put("OutIn", curReq.scalingDirection);
+			curOP.Options.put("ScaledSTName", curReq.scaledSTName);
+			if(ri == 0)
+				reqStr = "req0";
+			else
+				reqStr += ("||req"+ri);
+			
+			SEQCode seqCode = new SEQCode();
+			seqCode.OpCode = curOP;
+			icYAML.InfrasCodes.add(seqCode);
+		}
+		
+		SEQCode seqCode = new SEQCode();
+		Operation curOP = new Operation();
+		curOP.Operation = "hscale";
+		curOP.ObjectType = "REQ";
+		curOP.Objects = reqStr;
+		seqCode.OpCode = curOP;
+		icYAML.InfrasCodes.add(seqCode);
+		
+		icYAML.curDir = System.getProperty("java.io.tmpdir");
+		icYAML.rootDir = System.getProperty("java.io.tmpdir");
+		
+		ExeThread exeThread = new ExeThread(icYAML, tmpICLogPath, appID);
+		exeThread.start();
+		
+    		return Response.status(200)
+					.entity(String.valueOf(currentMili))
+					.build();
+
 	}
 	
 	
