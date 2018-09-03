@@ -1,0 +1,151 @@
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>CTRL Terminal</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.2/xterm.css" />
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.2/xterm.js"></script>
+    <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.2/addons/attach/attach.js"></script>
+</head>
+<body>
+    <div style="width:800px;" id="xterm"></div>
+    <script type="application/javascript">
+      	var hn = document.location.host;
+      	var host = document.location.hostname;
+        var term = new Terminal({
+            cursorBlink: true,
+            cols: 80,
+            rows: 30
+        });
+        term.open(document.getElementById('xterm'));
+        term.focus();
+        
+        ///for input
+        var input = [];
+        var curIndex = 0;
+        var prompt = null;
+        
+        var socket = new WebSocket('ws://'+hn+'/CloudsStormCA/csterm/'+host);
+        
+		term.on('key', function (key, ev) {
+            var printable = (
+              !ev.altKey && !ev.altGraphKey && !ev.ctrlKey && !ev.metaKey && ev.keyCode != 9 && ev.keyCode != 27
+            );
+			
+            if(socket.readyState == 1){
+	            var sendBits = true;
+	            if (ev.keyCode == 13) {
+	            	  var inputStr = input.join("");
+	            	  if(inputStr.trim() == ''){
+	            		  term.write('\r\n'+prompt);
+	            		  sendBits = false;
+	            	  }
+	            	  else
+			              socket.send(inputStr);
+		              
+		              curIndex = 0;
+		              input.length = 0;
+	              
+	            } else if (ev.keyCode == 8) {
+					if (curIndex > 0) {
+						curIndex--;
+	            		input.splice(curIndex, 1);
+	            		term.write('\033[1D\033[s\033[K');
+	            		for(var ci = curIndex ; ci<input.length ; ci++)
+	            			term.write(input[ci]);
+	            		term.write('\033[u');
+	              }
+	            }else if(ev.keyCode == 38){   ///up arrow
+	              
+	            }else if(ev.keyCode == 40){   ///down arrow
+	              
+	            }else if(ev.keyCode == 39){    //// right arrow
+	              if(curIndex < input.length){
+	               	curIndex++;
+	                term.write('\033[1C');
+	              }
+	              
+	            }else if(ev.keyCode == 37){   //// left arrow
+	              if(curIndex > 0){
+	                curIndex--;
+	                term.write('\033[1D');
+	              }
+	            }else if(ev.keyCode == 46 && key.charCodeAt(0) != ev.keyCode){   ///delete key
+	            	if(curIndex < input.length){            	
+	            		input.splice(curIndex, 1);
+		        		term.write('\033[s\033[K');
+		        		for(var ci = curIndex ; ci<input.length ; ci++)
+		        			term.write(input[ci]);
+		        		term.write('\033[u');
+	            	}
+	            }else if((ev.keyCode >= 112 && ev.keyCode <= 123) 
+	                || (ev.keyCode >= 33 && ev.keyCode <= 36) ){
+	              if(key.charCodeAt(0) == ev.keyCode){
+	            	  if(input.length == curIndex){
+	                    term.write(key);
+	                    input.push(key);
+	                    curIndex++;
+	              	  }else{
+	              		  term.write(key);
+	              		  input.splice(curIndex, 0, key);
+	              		  curIndex++;
+	              		  term.write('\033[s\033[K');
+	              		  for(var ci = curIndex ; ci<input.length ; ci++)
+	            			 term.write(input[ci]);
+	              		  term.write('\033[u');
+	              	  }
+	              }
+	            }
+	            else if (printable) {
+	            	if(input.length == curIndex){
+	                    term.write(key);
+	                    input.push(key);
+	                    curIndex++;
+	              	  }else{
+	              		  term.write(key);
+	              		  input.splice(curIndex, 0, key);
+	              		  curIndex++;
+	              		  term.write('\033[s\033[K');
+	              		  for(var ci = curIndex ; ci<input.length ; ci++)
+	            			 term.write(input[ci]);
+	              		  term.write('\033[u');
+	              	  }
+	                
+	            }
+	            
+	            if(sendBits){
+		            var buffer = new Uint8Array(2);
+		            buffer[0] = ev.keyCode;
+		            buffer[1] = key.charCodeAt(0);
+		            socket.send(buffer);
+	            }
+            }
+
+          });
+        
+        
+        term.on('paste', function (data, ev) {
+            res = data.split('\n');
+            term.write(res[0]);
+            for(var di = 0 ; di<res[0].length ; di++){
+            	input.splice(curIndex, 0, res[0][di]);
+            	curIndex++;
+        	}
+            term.write('\033[s\033[K');
+    		for(var ci = curIndex ; ci<input.length ; ci++)
+  				term.write(input[ci]);
+    		term.write('\033[u');
+        });
+        
+        socket.onmessage = function (evt) { 
+             var received_msg = evt.data;
+             if(received_msg.startsWith('prompt::::'))
+            	 prompt = received_msg.split('::::')[1];
+             else
+	             term.write(received_msg);
+        };
+        socket.onclose = function () {
+        	socket.send("exit");
+        }
+    </script>
+</body>
+</html>

@@ -43,8 +43,9 @@ public class CtrlAgent {
 	
 	private static final String appGzFileRoot = File.separator + "tmp" + File.separator ;
 	
-	private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
-
+	//private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
+	private static final String appsRoot = "/Users/zh9314/work/";
+	
 	private static final String topologyInf = "Infs" +File.separator+ "Topology" +File.separator+ "_top.yml";
 	private static final String credInf = "Infs" +File.separator+ "UC" +File.separator+ "cred.yml";
 	private static final String dbInf = "Infs" +File.separator+ "UD" +File.separator+ "db.yml";

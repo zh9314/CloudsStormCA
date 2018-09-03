@@ -21,7 +21,7 @@
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
 
 <script type="text/javascript">
-
+	
     var nodes = null;
     var edges = null;
     var network = null;
@@ -120,6 +120,24 @@
         }
       };
       network = new vis.Network(container, data, options);
+      
+      ///register doble click event
+      network.on("doubleClick", function (params) {
+    	  document.getElementById("vmName").innerHTML = params.nodes[0];
+    	  var appid = null;
+          var input = document.getElementById('appid');
+          if(!input.value)
+            appid = '123';
+          else{
+            if(input.value.replace(/(^s*)|(s*$)/g, "").length == 0)
+              appid = '123';
+            else
+              appid = input.value;
+          }
+    	  document.getElementById("appID").innerHTML = appid;
+    	  window.open ("sshterm.html", "newwindow", 
+			"height=580, width=830, left=400, toolbar=no, menubar=no, scrollbars=no, resizable=no, location=no, status=no");
+      });
 
     }
 
@@ -127,7 +145,6 @@
     // Called when the Visualization API is loaded.
     function draw(all) {
       
-
       var xhttp = new XMLHttpRequest();
       var ip_addr = document.location.hostname;
       xhttp.onreadystatechange = function() {
@@ -162,7 +179,11 @@
 
     }
 
-
+	
+    function logInCTRL() {
+    	window.open ("ctrlTerm.html", "newwindow", 
+			"height=580, width=830, left=400, toolbar=no, menubar=no, scrollbars=no, resizable=no, location=no, status=no");
+    }
     
     
   
@@ -179,7 +200,13 @@
 
 &nbsp &nbsp <button type="button" onclick="draw(false)">Refresh</button>  &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp  <button type="button" onclick="draw(true)">ShowAll</button>
 
-<p id="result"></p>
+&nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp <button type="button" onclick="logInCTRL()">Login CTRL</button>
+
+&nbsp &nbsp <p id="result"></p>
+
+&nbsp &nbsp <p id="vmName" hidden></p>
+
+&nbsp &nbsp <p id="appID" hidden></p>
 
 
 </body>
