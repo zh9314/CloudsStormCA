@@ -46,7 +46,8 @@
       for(var si in obj.Subnets){
         var idstr = obj.Subnets[si].Name;
         var subnet = obj.Subnets[si].Subnet + '/' + obj.Subnets[si].Netmask;
-        nodes.push({id: idstr, label: subnet, shape: 'hexagon', color: 'red', size: 25});
+        if(obj.Subnets[si].Memebers.length > 1)
+	        nodes.push({id: idstr, label: subnet, shape: 'hexagon', color: 'red', size: 25});
 
       }
 
@@ -57,6 +58,10 @@
           var lstr = curVM.Name;
           if(curVM.Status === 'running')
             lstr += (': ' + curVM.PublicIP);
+          if(curVM.CPU == undefined)
+        	  curVM.CPU = 1;
+          if(curVM.MEM == undefined)
+        	  curVM.MEM = 1;
           var vmsizef = parseFloat(curVM.CPU)+parseFloat(curVM.MEM);
           var vmsizei = parseInt(vmsizef)*10;
           var popUpText = 'Name: '+curSTI.Name+'</br>CP: '+curSTI.CloudProvider+'</br>DC: '+curSTI.DataCentre+'</br>CPU: '+curVM.CPU+'vCPU</br>MEM: '+curVM.MEM+'G</br>Status: '+curVM.Status;
@@ -81,9 +86,11 @@
       
       for(var si in obj.Subnets){
         var idstr = obj.Subnets[si].Name;
-        for(var mi in obj.Subnets[si].Memebers){
-          var curMember = obj.Subnets[si].Memebers[mi];
-          edges.push({from: idstr, to: curMember.VMName, length: 60, width: 5, label: curMember.PrivateIP, color: 'green'});
+        if(obj.Subnets[si].Memebers.length > 1){
+	        for(var mi in obj.Subnets[si].Memebers){
+	          var curMember = obj.Subnets[si].Memebers[mi];
+	          edges.push({from: idstr, to: curMember.VMName, length: 60, width: 5, label: curMember.PrivateIP, color: 'green'});
+	        }
         }
 
       }
@@ -144,7 +151,6 @@
 
     // Called when the Visualization API is loaded.
     function draw(all) {
-      
       var xhttp = new XMLHttpRequest();
       var ip_addr = document.location.hostname;
       xhttp.onreadystatechange = function() {
@@ -185,6 +191,17 @@
 			"height=580, width=830, left=400, toolbar=no, menubar=no, scrollbars=no, resizable=no, location=no, status=no");
     }
     
+    var ti = null;
+    function autoReload(){
+    	if(document.getElementById("reload").value=='Auto-relaod Disabled'){ 
+    		document.getElementById("reload").value='Auto-relaod Enabled';
+    		ti = setInterval(function(){draw(false);}, 10000);
+    	}else{
+    		clearInterval(ti);
+    		document.getElementById("reload").value='Auto-relaod Disabled';
+    	}
+    }
+    
     
   
 </script>
@@ -196,7 +213,11 @@
 
 <div id="mynetwork"><div class="vis-network" tabindex="900" style="position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"><canvas width="12000" height="12000" style="position: relative; touch-action: none; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 200%;"></canvas></div></div>
 
-&nbsp &nbsp AppID: <input type="text" id="appid"></input> &nbsp &nbsp <input type="button" id='switch' value="Complex Mode Disabled" onclick="if(this.value=='Complex Mode Disabled') this.value='Complex Mode Enabled'; else this.value='Complex Mode Disabled'"/></br></br>
+&nbsp &nbsp AppID: <input type="text" id="appid"></input> &nbsp &nbsp <input type="button" id='switch' value="Complex Mode Disabled" onclick="if(this.value=='Complex Mode Disabled') this.value='Complex Mode Enabled'; else this.value='Complex Mode Disabled'"/>
+
+&nbsp &nbsp <input type="button" id='reload' value="Auto-relaod Disabled" onclick="autoReload()"/>
+
+</br></br>
 
 &nbsp &nbsp <button type="button" onclick="draw(false)">Refresh</button>  &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp  <button type="button" onclick="draw(true)">ShowAll</button>
 

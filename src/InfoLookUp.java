@@ -9,6 +9,7 @@ import javax.ws.rs.core.Response;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import commonTool.CommonTool;
 import topology.analysis.TopologyAnalysisMain;
 import topology.dataStructure.Member;
 import topology.dataStructure.Subnet;
@@ -18,8 +19,8 @@ import topology.description.actual.VM;
 @Path("/lookup")
 public class InfoLookUp {
 	
-	//private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
-	private static final String appsRoot = "/Users/zh9314/work/";
+	private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
+	//private static final String appsRoot = "/Users/zh9314/work/";
 	
 	private static final String topologyInf = "Infs" +File.separator+ "Topology" +File.separator+ "_top.yml";
 

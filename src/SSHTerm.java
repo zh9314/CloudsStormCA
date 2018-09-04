@@ -24,8 +24,8 @@ import topology.description.actual.VM;
 
 @ServerEndpoint(value = "/sshterm/{vmName}/{appID}")
 public class SSHTerm {
-	//private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
-	private static final String appsRoot = "/Users/zh9314/work/";
+	private static final String appsRoot = CommonTool.formatDirWithSep(System.getProperty("user.dir")) + "work" + File.separator;
+	//private static final String appsRoot = "/Users/zh9314/work/";
 	
 	private static final String topologyInf = "Infs" +File.separator+ "Topology" +File.separator+ "_top.yml";
 		
@@ -166,7 +166,9 @@ public class SSHTerm {
 		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 		}
-		ProcessBuilder pb = new ProcessBuilder("ssh","-i", keyPath,"root@"+curVM.publicAddress);
+		String defaultSSHAccount = curVM.defaultSSHAccount;
+		ProcessBuilder pb = new ProcessBuilder("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", 
+												"-i", keyPath,defaultSSHAccount+"@"+curVM.publicAddress);
 
 		try {
 			pb.redirectErrorStream(true);

@@ -22,31 +22,70 @@
         term.focus();
         
         ///for input
+        var historyScope = 100;
         var input = [];
         var curIndex = 0;
         var prompt = null;
+        var history = new Array(historyScope);
+        var historyPtr = -1;
+        var historyIndex = -1;
+        var historySize = 0;
+        var recallCount = 0;
+        var curInput = null;
         
         var socket = new WebSocket('ws://'+hn+'/CloudsStormCA/sshterm/'+vmName+'/'+appID);
         
-		term.on('key', function (key, ev) {
+        term.on('key', function (key, ev) {
             var printable = (
               !ev.altKey && !ev.altGraphKey && !ev.ctrlKey && !ev.metaKey && ev.keyCode != 9 && ev.keyCode != 27
             );
 			
             if(socket.readyState == 1){
 	            var sendBits = true;
+	            
+	            if((ev.keyCode >= 112 && ev.keyCode <= 123) 
+		                || (ev.keyCode >= 33 && ev.keyCode <= 36) ){
+		              if(key.charCodeAt(0) == ev.keyCode)
+		            	  printable = true;
+		              else{
+		            	  printable = false;
+		            	  if(ev.keyCode == 36){   ///home key
+		            		  if(curIndex > 0){
+		            			  term.write('\033['+curIndex+'D');
+		            			  curIndex = 0;
+		            		  }
+		            	  }
+		            	  if(ev.keyCode == 35){    ///end key
+		            		  if(curIndex < input.length){
+		            			  term.write('\033['+(input.length-curIndex)+'C');
+		            			  curIndex = input.length;
+		            		  }
+		            	  }
+		            		  
+		              }
+		        }
+	            
+	            
 	            if (ev.keyCode == 13) {
 	            	  var inputStr = input.join("");
 		          	  if(inputStr.trim() == ''){
 		          		  term.write('\r\n'+prompt);
 		          		  sendBits = false;
-		          	  }else
+		          	  }else{
 		          		  socket.send(inputStr);
-		              
+		          		  historyIndex++;
+		          		  historyIndex %= historyScope;
+			          	  history[historyIndex] = inputStr;
+			          	  if(historySize < historyScope)
+				          	  historySize++;
+		          	  }
 		              curIndex = 0;
 		              input.length = 0;
+		              input = [];
+		          	  recallCount = 0;
+		          	  historyPtr = (historyIndex+1)%historyScope;
 	              
-	            } else if (ev.keyCode == 8) {
+	            } else if (ev.keyCode == 8) {    ////backspace
 					if (curIndex > 0) {
 						curIndex--;
 	            		input.splice(curIndex, 1);
@@ -55,22 +94,57 @@
 	            			term.write(input[ci]);
 	            		term.write('\033[u');
 	               }
-	            }else if(ev.keyCode == 38){   ///up arrow
-	              
-	            }else if(ev.keyCode == 40){   ///down arrow
-	              
-	            }else if(ev.keyCode == 39){    //// right arrow
+	            }else if(ev.keyCode == 38 && key.charCodeAt(0) == 27){   ///up arrow
+	                if(historySize > 0){
+	                	if(recallCount == 0)
+	                		curInput = input.join('');
+	                	if(recallCount < historySize){
+		                	recallCount++;
+		                	if(curIndex > 0)
+		               			term.write('\033['+curIndex+'D');
+		               		historyPtr--;
+		               		historyPtr %= historyScope;
+		               		if(historyPtr < 0)
+		               			historyPtr += historyScope;
+		               		term.write('\033[K'+history[historyPtr]);
+		               		input.length = 0;
+		               		input = history[historyPtr].split('');
+		               		curIndex = input.length;
+	                	}
+	                }
+	            }else if(ev.keyCode == 40 && key.charCodeAt(0) == 27){   ///down arrow
+	            	if(recallCount > 1){
+	            		recallCount--;
+	               		historyPtr++;
+	               		historyPtr %= historyScope;
+	               		if(curIndex > 0)
+	               			term.write('\033['+curIndex+'D');
+	               		term.write('\033[K'+history[historyPtr]);
+	               		input.length = 0;
+	               		input = history[historyPtr].split('');
+	               		curIndex = input.length;
+	                }else if(recallCount == 1){
+	            		if(curIndex > 0)
+	               			term.write('\033['+curIndex+'D');
+	               		term.write('\033[K'+curInput);
+	               		input.length = 0;
+	            		input = curInput.split('');
+	            		curIndex = input.length;
+	            		recallCount = 0;
+	            		historyPtr = (historyIndex+1)%historyScope;
+	            	}
+	            }else if(ev.keyCode == 39 && key.charCodeAt(0) == 27){    //// right arrow
 	              if(curIndex < input.length){
 	               	curIndex++;
 	                term.write('\033[1C');
 	              }
 	              
-	            }else if(ev.keyCode == 37){   //// left arrow
+	            }else if(ev.keyCode == 37 && key.charCodeAt(0) == 27){   //// left arrow
 	              if(curIndex > 0){
 	                curIndex--;
 	                term.write('\033[1D');
 	              }
-	            }else if(ev.keyCode == 46 && key.charCodeAt(0) != ev.keyCode){   ///delete key
+	            }else if(ev.keyCode == 46 && key.charCodeAt(0) == 27){   ///delete key
 	            	if(curIndex < input.length){            	
 	            		input.splice(curIndex, 1);
 		        		term.write('\033[s\033[K');
@@ -78,25 +152,8 @@
 		        			term.write(input[ci]);
 		        		term.write('\033[u');
 	            	}
-	            }else if((ev.keyCode >= 112 && ev.keyCode <= 123) 
-	                || (ev.keyCode >= 33 && ev.keyCode <= 36) ){
-	              if(key.charCodeAt(0) == ev.keyCode){
-	            	  if(input.length == curIndex){
-	                    term.write(key);
-	                    input.push(key);
-	                    curIndex++;
-	              	  }else{
-	              		  term.write(key);
-	              		  input.splice(curIndex, 0, key);
-	              		  curIndex++;
-	              		  term.write('\033[s\033[K');
-	              		  for(var ci = curIndex ; ci<input.length ; ci++)
-	            			 term.write(input[ci]);
-	              		  term.write('\033[u');
-	              	  }
-	              }
-	            }
-	            else if (printable) {
+	            }else if (printable) {
+	            	sendBits = false;
 	            	if(input.length == curIndex){
 	                    term.write(key);
 	                    input.push(key);
@@ -120,7 +177,7 @@
 		            socket.send(buffer);
 	            }
             }
-
+            
 
           });
         
