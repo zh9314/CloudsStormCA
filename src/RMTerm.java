@@ -19,9 +19,10 @@ public class RMTerm {
 	private Session curSession = null;
 	private Process curShell = null;
 	private BufferedReader stdInput = null;
-	private boolean thereExistOutput = false;
 	private String prompt = null;
-	private boolean enterBlocked = false;   /// block the enter key
+	
+	private String endTag = "2c00aa94-d5fe-4ebe-a8fb-d0a5a007ce1f"+"75cd2504-8f67-4ffe-a039-45508aa8c10c";
+	private boolean endStdOutput = false, endErrOutput = false;
 	
 	@OnOpen
 	public void onOpen(Session session, @PathParam("ctrlIP") String ctrlIP){
@@ -33,22 +34,7 @@ public class RMTerm {
 	@OnMessage
     public void onMessage(Session session, byte[] message, @PathParam("ctrlIP") String ctrlIP) {
 		System.out.println("GET A BMSG! "+message.length+" "+ message[0]+" "+ message[1]);
-		if(message[0] == 13){
-			ReadChecker rc = new ReadChecker();
-			Thread check = new Thread(rc);
-			check.start();
-			try {
-				Thread.sleep(400);
-				if(!enterBlocked && !thereExistOutput){
-					Thread.sleep(100);
-					if(!rc.sth && curShell != null)
-						session.getBasicRemote().sendText("\r\n"+prompt);
-				}
-				enterBlocked = false;
-			} catch ( IOException | InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
+		
 		
 		if(message[1] == 3 || message[1] == 4){
 			if(curShell != null){
@@ -67,16 +53,10 @@ public class RMTerm {
 	
 	@OnMessage
     public void onMessage(Session session, String message) {
-		thereExistOutput = false;
-		if(message.trim().equals("")){
-			enterBlocked = true;
-			return ;
-		}
 		System.out.println("GET A MSG! "+message);
 		try {
 			if(message.trim().equals("clear")){
 				curSession.getBasicRemote().sendText("\033[2J\033[0;0H"+prompt);
-				enterBlocked = true;
 				return;
 			} 
 			
@@ -88,7 +68,12 @@ public class RMTerm {
 		
 			Writer strWriter = new OutputStreamWriter(curShell.getOutputStream());
 		
+			endStdOutput = false;
+			endErrOutput = false;
 			strWriter.write(message+"\n");
+			strWriter.flush();
+			
+			strWriter.write("echo '"+endTag+"'; "+endTag+"\n");
 			strWriter.flush();
 			
 		} catch (IOException e) {
@@ -104,29 +89,6 @@ public class RMTerm {
 		}
 	}
 	
-	/*@OnError
-	public void onError(Throwable t) throws Throwable {
-		System.out.println("Error");
-		if(curShell != null){
-			curShell.destroyForcibly();
-			curShell = null;
-		}	
-	    // Most likely cause is a user closing their browser. Check to see if
-	    // the root cause is EOF and if it is ignore it.
-	    // Protect against infinite loops.
-	    int count = 0;
-	    Throwable root = t;
-	    while (root.getCause() != null && count < 20) {
-	        root = root.getCause();
-	        count ++;
-	    }
-	    if (root instanceof EOFException) {
-	        // Assume this is triggered by the user closing their browser and
-	        // ignore it.
-	    } else {
-	        throw t;
-	    }
-	}*/
 	
 	private void startBash(String ctrlIP){
 		ProcessBuilder pb = new ProcessBuilder("/bin/bash");
@@ -139,17 +101,23 @@ public class RMTerm {
 			curSession.getBasicRemote().sendText("prompt::::"+prompt);
 			welcomePage();
 			curSession.getBasicRemote().sendText("\r\n"+prompt);
-			thereExistOutput = false;
 			new Thread(new Runnable(){
 			    public void run(){
 			    		try {
 			    			String returnString = "";
 			    	    		while ((returnString = stdInput.readLine()) != null) {
 			    	    			System.out.println(returnString);
-		    	    				curSession.getBasicRemote().sendText("\r\n"+returnString);
-			    	    			thereExistOutput = true;
-			    	    			if(!stdInput.ready())
-			    	    				curSession.getBasicRemote().sendText("\r\n"+prompt);
+			    	    			if(returnString.equals(endTag))
+			    	    				endStdOutput = true;
+			    	    			else if(returnString.contains(endTag) && returnString.contains("not found"))
+		    	    					endErrOutput = true;
+			    	    			else if(returnString.equals("echo '"+endTag+"'; "+endTag) )
+			    	    				;
+			    	    			else
+			    	    				curSession.getBasicRemote().sendText(returnString+"\r\n");
+		    	    				
+		    	    				if(endStdOutput && endErrOutput)
+		    	    					curSession.getBasicRemote().sendText(prompt);
 			    	    		}
 			    	    		System.out.println("Terminated");
 			    	    		
@@ -177,29 +145,6 @@ public class RMTerm {
 		}
 	}
 	
-	
-	class ReadChecker implements Runnable {
-		public boolean sth = false;
-		
-		@Override
-	    public void run(){
-			try {
-				int count = 10, i = 0;
-				while(i<count){
-	    	    			if(stdInput.ready()){
-	    	    				sth = true;
-	    	    			}
-	    	    			Thread.sleep(100);
-	    	    			i++;
-				}
-	    		
-			} catch (IOException | InterruptedException e) {
-				e.printStackTrace();
-			}
-	    }
-		
-		
-	}
 	
 
 }

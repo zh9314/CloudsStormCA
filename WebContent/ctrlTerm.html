@@ -8,6 +8,7 @@
 </head>
 <body>
     <div style="width:800px;" id="xterm"></div>
+    <p id="result">123</p>
     <script type="application/javascript">
       	var hn = document.location.host;
       	var host = document.location.hostname;
@@ -70,6 +71,7 @@
 		          		  term.write('\r\n'+prompt);
 		          		  sendBits = false;
 		          	  }else{
+		          		  term.write('\r\n');
 		          		  socket.send(inputStr);
 		          		  historyIndex++;
 		          		  historyIndex %= historyScope;
@@ -197,8 +199,13 @@
              var received_msg = evt.data;
              if(received_msg.startsWith('prompt::::'))
             	 prompt = received_msg.split('::::')[1];
-             else
+             else{
+            	 if(evt.data == prompt)
+            		 input.length = 0;
+            	 
 	             term.write(received_msg);
+             }
+             document.getElementById('result').innerHTML = prompt+" "+evt.data;
         };
         socket.onclose = function () {
         	socket.send("exit");

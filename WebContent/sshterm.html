@@ -21,6 +21,7 @@
         term.open(document.getElementById('xterm'));
         term.focus();
         
+        var connected = false;
         ///for input
         var historyScope = 100;
         var input = [];
@@ -39,8 +40,8 @@
             var printable = (
               !ev.altKey && !ev.altGraphKey && !ev.ctrlKey && !ev.metaKey && ev.keyCode != 9 && ev.keyCode != 27
             );
-			
-            if(socket.readyState == 1){
+
+            if(socket.readyState == 1 && connected){
 	            var sendBits = true;
 	            
 	            if((ev.keyCode >= 112 && ev.keyCode <= 123) 
@@ -72,6 +73,7 @@
 		          		  term.write('\r\n'+prompt);
 		          		  sendBits = false;
 		          	  }else{
+		          		  term.write('\r\n');
 		          		  socket.send(inputStr);
 		          		  historyIndex++;
 		          		  historyIndex %= historyScope;
@@ -177,31 +179,38 @@
 		            socket.send(buffer);
 	            }
             }
-            
 
           });
         
-        
-        
         term.on('paste', function (data, ev) {
-            res = data.split('\n');
-            term.write(res[0]);
-            for(var di = 0 ; di<res[0].length ; di++){
-            	input.splice(curIndex, 0, res[0][di]);
-            	curIndex++;
+        	if(connected){
+	            res = data.split('\n');
+	            term.write(res[0]);
+	            for(var di = 0 ; di<res[0].length ; di++){
+	            	input.splice(curIndex, 0, res[0][di]);
+	            	curIndex++;
+	        	}
+	            term.write('\033[s\033[K');
+	    		for(var ci = curIndex ; ci<input.length ; ci++)
+	  				term.write(input[ci]);
+	    		term.write('\033[u');
         	}
-            term.write('\033[s\033[K');
-    		for(var ci = curIndex ; ci<input.length ; ci++)
-  				term.write(input[ci]);
-    		term.write('\033[u');
         });
         
+        var endTag = "2c00aa94-d5fe-4ebe-a8fb-d0a5a007ce1f"+"75cd2504-8f67-4ffe-a039-45508aa8c10c";
         socket.onmessage = function (evt) { 
              var received_msg = evt.data;
-             if(received_msg.startsWith('prompt::::'))
+             if(received_msg.startsWith('prompt::::')){
             	 prompt = received_msg.split('::::')[1];
-             else
+              	 connected = true;
+             }else if(received_msg == endTag){
+            	 connected = false;
+             }
+             else{
+            	 if(received_msg == prompt)
+            		 input.length = 0;
 	             term.write(received_msg);
+             }
         };
         socket.onclose = function () {
         	socket.send("exit");
