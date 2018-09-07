@@ -98,7 +98,9 @@ public class RMTerm {
 			stdInput = new BufferedReader(new 
 				     InputStreamReader(curShell.getInputStream()));
 			prompt = "\033[1;3;31mroot@ctrl\033[1;3;33m("+ctrlIP+")\033[0m # ";
+			String promptPure = "root@ctrl("+ctrlIP+") # ";
 			curSession.getBasicRemote().sendText("prompt::::"+prompt);
+			curSession.getBasicRemote().sendText("promptPure::::"+promptPure);
 			welcomePage();
 			curSession.getBasicRemote().sendText("\r\n"+prompt);
 			new Thread(new Runnable(){

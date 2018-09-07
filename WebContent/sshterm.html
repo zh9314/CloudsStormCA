@@ -12,10 +12,12 @@
     	var vmName = window.opener.document.getElementById("vmName").innerHTML;
     	var appID = window.opener.document.getElementById("appID").innerHTML;
     	
+    	var maxColNum = 80;
+    	var promptLen = 0;
       	var hn = document.location.host;
         var term = new Terminal({
             cursorBlink: true,
-            cols: 80,
+            cols: maxColNum,
             rows: 30
         });
         term.open(document.getElementById('xterm'));
@@ -36,11 +38,51 @@
         
         var socket = new WebSocket('ws://'+hn+'/CloudsStormCA/sshterm/'+vmName+'/'+appID);
         
+        
+        ////positions refer to the index in the input string
+        function cursorBack(prePos, curPos, empty){
+        	if(prePos >= curPos)
+        		return;
+        	var curCol = (curPos + promptLen) % maxColNum;
+    		var curRow = Math.floor((curPos+promptLen) / maxColNum);
+        	var preCol = (prePos + promptLen) % maxColNum;
+    		var preRow = Math.floor((prePos+promptLen) / maxColNum);
+            if(curCol > 0)
+	    		term.write('\033['+curCol+'D');
+    		while(curRow > preRow){
+    			if(empty)
+    				term.write('\033[K');
+    			term.write('\033[1A');
+    			curRow--;
+    		}
+    		if(preCol > 0)
+	    		term.write('\033['+preCol+'C');
+    		if(empty)
+    			term.write('\033[K');
+        }
+        
+        function cursorForward(prePos, curPos){
+        	if(prePos <= curPos)
+        		return;
+        	var curCol = (curPos + promptLen) % maxColNum;
+    		var curRow = Math.floor((curPos+promptLen) / maxColNum);
+        	var preCol = (prePos + promptLen) % maxColNum;
+    		var preRow = Math.floor((prePos+promptLen) / maxColNum);
+    		if(curCol > 0)
+	    		term.write('\033['+curCol+'D');
+    		while(curRow < preRow){
+    			term.write('\033[1B');
+    			curRow++;
+    		}
+    		if(preCol > 0)	
+	    		term.write('\033['+preCol+'C');
+        }
+        
         term.on('key', function (key, ev) {
             var printable = (
               !ev.altKey && !ev.altGraphKey && !ev.ctrlKey && !ev.metaKey && ev.keyCode != 9 && ev.keyCode != 27
             );
-
+			
             if(socket.readyState == 1 && connected){
 	            var sendBits = true;
 	            
@@ -51,21 +93,16 @@
 		              else{
 		            	  printable = false;
 		            	  if(ev.keyCode == 36){   ///home key
-		            		  if(curIndex > 0){
-		            			  term.write('\033['+curIndex+'D');
-		            			  curIndex = 0;
-		            		  }
+		            		  cursorBack(0, curIndex, false);
+		            		  curIndex = 0;
 		            	  }
 		            	  if(ev.keyCode == 35){    ///end key
-		            		  if(curIndex < input.length){
-		            			  term.write('\033['+(input.length-curIndex)+'C');
-		            			  curIndex = input.length;
-		            		  }
+		            		  cursorForward(input.length, curIndex);
+		            		  curIndex = input.length;
 		            	  }
 		            		  
 		              }
 		        }
-	            
 	            
 	            if (ev.keyCode == 13) {
 	            	  var inputStr = input.join("");
@@ -73,6 +110,7 @@
 		          		  term.write('\r\n'+prompt);
 		          		  sendBits = false;
 		          	  }else{
+		          		  cursorForward(input.length, curIndex);
 		          		  term.write('\r\n');
 		          		  socket.send(inputStr);
 		          		  historyIndex++;
@@ -81,6 +119,7 @@
 			          	  if(historySize < historyScope)
 				          	  historySize++;
 		          	  }
+		          	  
 		              curIndex = 0;
 		              input.length = 0;
 		              input = [];
@@ -89,21 +128,25 @@
 	              
 	            } else if (ev.keyCode == 8) {    ////backspace
 					if (curIndex > 0) {
+						cursorBack(curIndex-1, curIndex, false);
 						curIndex--;
 	            		input.splice(curIndex, 1);
-	            		term.write('\033[1D\033[s\033[K');
 	            		for(var ci = curIndex ; ci<input.length ; ci++)
 	            			term.write(input[ci]);
-	            		term.write('\033[u');
+	            		if( (promptLen+input.length) % maxColNum == 0 )
+		        			term.write('  \033[2D');
+	            		
+	            		term.write('\033[K');
+		        		cursorBack(curIndex, input.length, false);
+
 	               }
 	            }else if(ev.keyCode == 38 && key.charCodeAt(0) == 27){   ///up arrow
-	                if(historySize > 0){
+	            	if(historySize > 0){
 	                	if(recallCount == 0)
 	                		curInput = input.join('');
 	                	if(recallCount < historySize){
 		                	recallCount++;
-		                	if(curIndex > 0)
-		               			term.write('\033['+curIndex+'D');
+		                	cursorBack(0, input.length, true);
 		               		historyPtr--;
 		               		historyPtr %= historyScope;
 		               		if(historyPtr < 0)
@@ -112,6 +155,8 @@
 		               		input.length = 0;
 		               		input = history[historyPtr].split('');
 		               		curIndex = input.length;
+		               		if( (curIndex+promptLen) % maxColNum == 0 )
+			            	   term.write(' \033[1D');
 	                	}
 	                }
 	            }else if(ev.keyCode == 40 && key.charCodeAt(0) == 27){   ///down arrow
@@ -119,15 +164,13 @@
 	            		recallCount--;
 	               		historyPtr++;
 	               		historyPtr %= historyScope;
-	               		if(curIndex > 0)
-	               			term.write('\033['+curIndex+'D');
+	               		cursorBack(0, input.length, true);
 	               		term.write('\033[K'+history[historyPtr]);
 	               		input.length = 0;
 	               		input = history[historyPtr].split('');
 	               		curIndex = input.length;
 	                }else if(recallCount == 1){
-	            		if(curIndex > 0)
-	               			term.write('\033['+curIndex+'D');
+	                	cursorBack(0, input.length, true);
 	               		term.write('\033[K'+curInput);
 	               		input.length = 0;
 	            		input = curInput.split('');
@@ -135,41 +178,46 @@
 	            		recallCount = 0;
 	            		historyPtr = (historyIndex+1)%historyScope;
 	            	}
+	            
+	            	if( (curIndex+promptLen) % maxColNum == 0 )
+		            	   term.write(' \033[1D');
 	            }else if(ev.keyCode == 39 && key.charCodeAt(0) == 27){    //// right arrow
-	              if(curIndex < input.length){
-	               	curIndex++;
-	                term.write('\033[1C');
-	              }
-	              
+					if(curIndex < input.length){
+						cursorForward(curIndex+1, curIndex, false);
+		                curIndex++;
+					}
 	            }else if(ev.keyCode == 37 && key.charCodeAt(0) == 27){   //// left arrow
 	              if(curIndex > 0){
-	                curIndex--;
-	                term.write('\033[1D');
+	            	  cursorBack(curIndex-1, curIndex, false);
+	                  curIndex--;
 	              }
 	            }else if(ev.keyCode == 46 && key.charCodeAt(0) == 27){   ///delete key
 	            	if(curIndex < input.length){            	
 	            		input.splice(curIndex, 1);
-		        		term.write('\033[s\033[K');
 		        		for(var ci = curIndex ; ci<input.length ; ci++)
 		        			term.write(input[ci]);
-		        		term.write('\033[u');
+		        		if( (promptLen+input.length) % maxColNum == 0 )
+		        			term.write(' \033[1D');
+		        		term.write('\033[K');
+		        		cursorBack(curIndex, input.length, false);
+		        		
 	            	}
 	            }else if (printable) {
 	            	sendBits = false;
-	            	if(input.length == curIndex){
-	                    term.write(key);
-	                    input.push(key);
-	                    curIndex++;
-	              	  }else{
-	              		  term.write(key);
-	              		  input.splice(curIndex, 0, key);
-	              		  curIndex++;
-	              		  term.write('\033[s\033[K');
-	              		  for(var ci = curIndex ; ci<input.length ; ci++)
-	            			 term.write(input[ci]);
-	              		  term.write('\033[u');
-	              	  }
-	                
+              		term.write(key);
+              		input.splice(curIndex, 0, key);
+              		curIndex++;
+              		for(var ci = curIndex ; ci<input.length ; ci++)
+            			term.write(input[ci]);
+              		if( (promptLen+input.length) % maxColNum == 0 )
+	        			term.write(' \033[1D');
+
+	            	if( (curIndex+promptLen) % maxColNum == 0 ){
+	            		if(curIndex == input.length)
+		            		term.write(' \033[1D');
+	            	}
+              		cursorBack(curIndex, input.length, false);
+	            	
 	            }
 	            
 	            if(sendBits){
@@ -184,16 +232,23 @@
         
         term.on('paste', function (data, ev) {
         	if(connected){
-	            res = data.split('\n');
+        		res = data.split('\n');
 	            term.write(res[0]);
 	            for(var di = 0 ; di<res[0].length ; di++){
 	            	input.splice(curIndex, 0, res[0][di]);
 	            	curIndex++;
 	        	}
-	            term.write('\033[s\033[K');
-	    		for(var ci = curIndex ; ci<input.length ; ci++)
-	  				term.write(input[ci]);
-	    		term.write('\033[u');
+          		for(var ci = curIndex ; ci<input.length ; ci++)
+        			term.write(input[ci]);
+          		if( (promptLen+input.length) % maxColNum == 0 )
+        			term.write(' \033[1D');
+
+            	if( (curIndex+promptLen) % maxColNum == 0 ){
+            		if(curIndex == input.length)
+	            		term.write(' \033[1D');
+            	}
+          		cursorBack(curIndex, input.length, false);
+	            
         	}
         });
         
@@ -203,9 +258,10 @@
              if(received_msg.startsWith('prompt::::')){
             	 prompt = received_msg.split('::::')[1];
               	 connected = true;
-             }else if(received_msg == endTag){
+             }else if(received_msg == endTag)
             	 connected = false;
-             }
+             else if(received_msg.startsWith('promptPure::::'))
+            	 promptLen = received_msg.split('::::')[1].length;
              else{
             	 if(received_msg == prompt)
             		 input.length = 0;

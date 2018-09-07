@@ -137,6 +137,7 @@ public class SSHTerm {
 			return ;
 		
 		prompt = "\033[1;3;31mroot@"+vmName+"\033[1;3;33m("+curVM.publicAddress+")\033[0m # ";
+		String promptPure = "root@"+vmName+"("+curVM.publicAddress+") # ";
 		
 		keyPath = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"))
 				+ File.separator + "ssh_tmp_"+System.currentTimeMillis()+".key";
@@ -189,7 +190,7 @@ public class SSHTerm {
 			    	    					if(returnString.contains("stdin: is not a tty")){
 			    	    						curSession.getBasicRemote().sendText("prompt::::"+prompt);
 				    	    					curSession.getBasicRemote().sendText(prompt);
-				    	    					//pb.redirectErrorStream(false);
+				    	    					curSession.getBasicRemote().sendText("promptPure::::"+promptPure);
 				    	    					started = true;
 				    	    				}
 			    	    					else
