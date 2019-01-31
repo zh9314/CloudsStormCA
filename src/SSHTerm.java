@@ -2,7 +2,6 @@
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -15,7 +14,6 @@ import javax.websocket.Session;
 import javax.websocket.server.PathParam;
 import javax.websocket.server.ServerEndpoint;
 
-import org.apache.commons.io.FileUtils;
 
 import commonTool.CommonTool;
 import topology.analysis.TopologyAnalysisMain;
@@ -28,6 +26,8 @@ public class SSHTerm {
 	//private static final String appsRoot = "/Users/zh9314/work/";
 	
 	private static final String topologyInf = "Infs" +File.separator+ "Topology" +File.separator+ "_top.yml";
+	private static final String clusterPriKey = "Infs" +File.separator+ "Topology" + File.separator 
+													+ "clusterKeyPair" + File.separator + "id_rsa";
 		
 		
 	private Session curSession = null;
@@ -136,23 +136,18 @@ public class SSHTerm {
 		if(curVM.publicAddress == null || curVM.publicAddress.equals(""))
 			return ;
 		
-		prompt = "\033[1;3;31mroot@"+vmName+"\033[1;3;33m("+curVM.publicAddress+")\033[0m # ";
-		String promptPure = "root@"+vmName+"("+curVM.publicAddress+") # ";
+		prompt = "\033[1;3;31mCloudsStorm@"+vmName+"\033[1;3;33m("+curVM.publicAddress+")\033[0m # ";
+		String promptPure = "CloudsStorm@"+vmName+"("+curVM.publicAddress+") # ";
 		
-		keyPath = CommonTool.formatDirWithSep(System.getProperty("java.io.tmpdir"))
-				+ File.separator + "ssh_tmp_"+System.currentTimeMillis()+".key";
-		FileWriter keyFw;
+		keyPath = appsRoot + "AppInfs" + File.separator + appID + File.separator + clusterPriKey;
 		try {
-			keyFw = new FileWriter(keyPath, false);
-			keyFw.write(curVM.ponintBack2STI.subTopology.accessKeyPair.privateKeyString);
-			keyFw.close();
 			
 			Process p = Runtime.getRuntime().exec("chmod 400 "+keyPath);
 			p.waitFor();
 		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 		}
-		String defaultSSHAccount = curVM.defaultSSHAccount;
+		String defaultSSHAccount = "CloudsStorm";
 		ProcessBuilder pb = new ProcessBuilder("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", 
 												"-i", keyPath,defaultSSHAccount+"@"+curVM.publicAddress);
 
@@ -170,7 +165,7 @@ public class SSHTerm {
 			    	    		while ((returnString = stdInput.readLine()) != null) {
 			    	    			System.out.println(returnString);
 			    	    			if(!started){
-			    	    				if(returnString.contains("Pseudo-terminal")){
+			    	    				if(returnString.contains("Pseudo-terminal") || returnString.contains("Welcome")){
 			    	    					connected = 1;
 			    	    					continue;
 			    	    				}
@@ -183,19 +178,20 @@ public class SSHTerm {
 				    	    				else{
 				    	    					curSession.getBasicRemote().sendText("\033[u\033[K\033[1;32mConnected!\033[0m\r\n");
 				    	    					connected = 2;
+				    	    					curSession.getBasicRemote().sendText("prompt::::"+prompt);
+				    	    					curSession.getBasicRemote().sendText("promptPure::::"+promptPure);
+				    	    					started = true;
+				    	    					
+				    	    					Writer strWriter = new OutputStreamWriter(curShell.getOutputStream());
+				    	    					
+				    	    					endStdOutput = false;
+				    	    					endErrOutput = false;
+				    	    					
+				    	    					strWriter.write("echo '"+endTag+"'; "+endTag+"\n");
+				    	    					strWriter.flush();
 				    	    				}
 			    	    				}
 			    	    				
-			    	    				if(connected == 2){
-			    	    					if(returnString.contains("stdin: is not a tty")){
-			    	    						curSession.getBasicRemote().sendText("prompt::::"+prompt);
-				    	    					curSession.getBasicRemote().sendText(prompt);
-				    	    					curSession.getBasicRemote().sendText("promptPure::::"+promptPure);
-				    	    					started = true;
-				    	    				}
-			    	    					else
-			    	    						curSession.getBasicRemote().sendText(returnString+"\r\n");
-			    	    				}
 			    	    				
 			    	    			}else{
 			    	    				if(returnString.equals(endTag))
@@ -211,7 +207,6 @@ public class SSHTerm {
 			    	    					curSession.getBasicRemote().sendText(prompt);
 			    	    			}
 			    	    		}
-			    	    		FileUtils.deleteQuietly(new File(keyPath));
 			    	    		System.out.println("Terminated");
 				    	    		
 					} catch (IOException e) {
